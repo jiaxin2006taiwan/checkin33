@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE 打卡系統</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+            background-color: #f5f5f5;
+        }
+        h2 { color: #1DB446; margin-bottom: 20px; }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #00B900;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            margin: 10px;
+            transition: background-color 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            width: 200px;
+        }
+        #checkInBtn { background-color: #00B900; }
+        #checkOutBtn { background-color: #FF4B4B; }
+        #manualCheckInBtn { background-color: #FFA500; }
+        #leaveRequestBtn { background-color: #007BFF; }
+        button:hover { opacity: 0.9; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            white-space: pre-line;
+        }
+        #manualCheckInForm, #leaveRequestForm {
+            display: none;
+            padding: 15px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <h2>📍 LINE 打卡系統</h2>
+    <p id="status">正在初始化系統...</p>
+    <div class="button-group">
+        <button id="checkInBtn" onclick="getLocation('上班')" disabled>📍 打卡上班</button>
+        <button id="checkOutBtn" onclick="getLocation('下班')" disabled>📍 打卡下班</button>
+        <button id="manualCheckInBtn" onclick="toggleManualCheckIn()">✏️ 補打卡</button>
+        <button id="leaveRequestBtn" onclick="toggleLeaveRequest()">🏖️ 申請請假</button>
+    </div>
+
+    <div id="manualCheckInForm">
+        <h3>補打卡</h3>
+        <input type="datetime-local" id="manualTime" />
+        <select id="manualType">
+            <option value="上班">上班</option>
+            <option value="下班">下班</option>
+        </select>
+        <button onclick="submitManualCheckIn()">送出</button>
+    </div>
+
+    <div id="leaveRequestForm">
+        <h3>申請請假</h3>
+        <input type="date" id="leaveDate" />
+        <select id="leaveType">
+            <option value="事假">事假</option>
+            <option value="病假">病假</option>
+            <option value="特休">特休</option>
+        </select>
+        <button onclick="submitLeaveRequest()">送出</button>
+    </div>
+
+    <script>
+        const liffId = "2006862406-0NZ6o7LD";
+        const gasUrl = "https://script.google.com/macros/s/AKfycbzM78ZrA2g2nqXq--w8oE4CE8q-1LLIxpJJc1VA2GtKrdKvwLoi6YB2ksPO-w0FVICc/exec";
+        
+        async function initializeLiff() {
+            try {
+                await liff.init({ liffId });
+                if (!liff.isLoggedIn()) {
+                    liff.login();
+                    return;
+                }
+                document.getElementById("status").innerText = "✅ 系統已就緒，請選擇打卡類型";
+                document.getElementById("checkInBtn").disabled = false;
+                document.getElementById("checkOutBtn").disabled = false;
+            } catch (error) {
+                document.getElementById("status").innerText = "❌ 系統初始化失敗，請重新整理頁面";
+            }
+        }
+
+        function getLocation(workType) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    async position => {
+                        try {
+                            const address = await reverseGeocode(position.coords.latitude, position.coords.longitude);
+                            await sendCheckInData(workType, position.coords.latitude, position.coords.longitude, address);
+                        } catch (error) {
+                            alert("無法獲取位置資訊：" + error.message);
+                        }
+                    },
+                    () => alert("無法獲取位置，請確保 GPS 已開啟")
+                );
+            } else {
+                alert("瀏覽器不支援 GPS 定位");
+            }
+        }
+
+        async function reverseGeocode(lat, lng) {
+            try {
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=zh-TW`
+                );
+                const data = await response.json();
+                return data.display_name || "未知地址";
+            } catch (error) {
+                console.error("地址獲取失敗：", error);
+                return "無法取得地址";
+            }
+        }
+
+        async function sendCheckInData(workType, lat, lng, address) {
+            const profile = await liff.getProfile();
+            const data = {
+                action: "打卡",
+                userId: profile.userId,
+                profile: { displayName: profile.displayName },
+                lat,
+                lng,
+                address,
+                type: workType
+            };
+
+            try {
+                await fetch(gasUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(data),
+                    mode: "no-cors"  // 添加這行
+                });
+                alert("打卡成功！");
+            } catch (error) {
+                alert("打卡失敗！");
+            }
+        }
+
+        function toggleManualCheckIn() {
+            document.getElementById("manualCheckInForm").style.display = 'block';
+            document.getElementById("leaveRequestForm").style.display = 'none';
+        }
+
+        function toggleLeaveRequest() {
+            document.getElementById("leaveRequestForm").style.display = 'block';
+            document.getElementById("manualCheckInForm").style.display = 'none';
+        }
+
+        async function submitManualCheckIn() {
+            try {
+                const profile = await liff.getProfile();
+                const manualTime = document.getElementById("manualTime").value;
+                const manualType = document.getElementById("manualType").value;
+                
+                if (!manualTime) {
+                    alert("請輸入補打卡時間");
+                    return;
+                }
+
+                const data = {
+                    action: "補打卡",
+                    userId: profile.userId,
+                    profile: { displayName: profile.displayName },
+                    time: manualTime,
+                    type: manualType
+                };
+
+                const result = await sendData(data);
+                if (result) {
+                    document.getElementById("manualCheckInForm").style.display = 'none';
+                    document.getElementById("status").innerText = "✅ 補打卡申請已送出";
+                    document.getElementById("manualTime").value = "";
+                    document.getElementById("manualType").selectedIndex = 0;
+                }
+            } catch (error) {
+                alert("補打卡失敗：" + error.message);
+            }
+        }
+
+        async function submitLeaveRequest() {
+            try {
+                const profile = await liff.getProfile();
+                const leaveDate = document.getElementById("leaveDate").value;
+                const leaveType = document.getElementById("leaveType").value;
+                
+                if (!leaveDate) {
+                    alert("請選擇請假日期");
+                    return;
+                }
+
+                const data = {
+                    action: "請假申請",
+                    userId: profile.userId,
+                    profile: { displayName: profile.displayName },
+                    startDate: leaveDate,
+                    leaveType: leaveType,
+                    status: "申請中"
+                };
+
+                const result = await sendData(data);
+                if (result) {
+                    document.getElementById("leaveRequestForm").style.display = 'none';
+                    document.getElementById("status").innerText = "✅ 請假申請已送出";
+                    document.getElementById("leaveDate").value = "";
+                    document.getElementById("leaveType").selectedIndex = 0;
+                }
+            } catch (error) {
+                alert("請假申請失敗：" + error.message);
+            }
+        }
+
+        async function sendData(data) {
+            try {
+                await fetch(gasUrl, {
+                    method: "POST",
+                    headers: { 
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(data),
+                    mode: "no-cors"  // 添加這行
+                });
+                return true;
+            } catch (error) {
+                throw new Error("送出失敗，請稍後再試");
+            }
+        }
+
+        window.onload = initializeLiff;
+    </script>
+</body>
+</html>
